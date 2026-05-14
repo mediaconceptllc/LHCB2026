@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# temp/scratch
+.claude/
+.gemini/
+.tempmediaStorage/
+*.resolved
+*.resolved.*
+scratchpad_*
+dom_*
+walkthrough.md
+task.md
+implementation_plan.md
