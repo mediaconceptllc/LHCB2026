@@ -100,7 +100,12 @@ export async function Footer() {
                 rel="noopener noreferrer"
                 className="relative h-14 w-40 md:w-56 grayscale hover:grayscale-0 opacity-60 hover:opacity-100 transition-all duration-300"
               >
-                <Image src={p.logo} alt={p.name} fill className="object-contain" />
+                <Image 
+                  src={p.logo} 
+                  alt={p.name} 
+                  fill 
+                  className={`object-contain ${p.name === 'Ulaanbaatar Hotel' ? 'scale-[2.2]' : ''}`} 
+                />
               </a>
             ))}
           </div>

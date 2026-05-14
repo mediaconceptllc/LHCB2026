@@ -44,12 +44,12 @@ export default function PartnersPage() {
                   {items.map((item) => (
                     <Card key={item.name} className="overflow-hidden border-slate-100 hover:shadow-xl transition-all duration-300 rounded-3xl bg-white group">
                       <CardContent className="p-8">
-                        <div className="h-20 w-full relative mb-8 grayscale group-hover:grayscale-0 transition-all duration-500 opacity-80 group-hover:opacity-100">
+                        <div className={`${item.name === 'Ulaanbaatar Hotel' ? 'h-32' : 'h-20'} w-full relative mb-8 grayscale group-hover:grayscale-0 transition-all duration-500 opacity-80 group-hover:opacity-100`}>
                           <Image
                             src={item.logo}
                             alt={item.name}
                             fill
-                            className="object-contain object-left"
+                            className={`object-contain object-left ${item.name === 'Ulaanbaatar Hotel' ? 'scale-[1.8] origin-left' : ''}`}
                           />
                         </div>
                         <h3 className="text-xl font-bold text-navy-800 mb-3 group-hover:text-indigo transition-colors">

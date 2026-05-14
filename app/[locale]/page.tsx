@@ -151,7 +151,12 @@ export default function HomePage() {
                 rel="noopener noreferrer"
                 className="relative h-12 w-28 md:w-36 grayscale hover:grayscale-0 opacity-50 hover:opacity-100 transition-all duration-300"
               >
-                <Image src={p.logo} alt={p.name} fill className="object-contain" />
+                <Image 
+                  src={p.logo} 
+                  alt={p.name} 
+                  fill 
+                  className={`object-contain ${p.name === 'Ulaanbaatar Hotel' ? 'scale-[2.2]' : ''}`} 
+                />
               </a>
             ))}
           </div>
