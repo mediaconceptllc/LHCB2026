@@ -77,6 +77,19 @@ const STATUS_META: Record<ConfirmStatus, { label: string; cls: string }> = {
   pending: { label: 'Хүлээгдэж буй', cls: 'bg-amber-100 text-amber-700' },
 };
 
+// Filled seat colours by confirmation status (used on the seating plan).
+const SEAT_STATUS_CLS: Record<ConfirmStatus, string> = {
+  confirmed: 'bg-emerald-500 text-white hover:bg-emerald-600',
+  pending: 'bg-amber-500 text-white hover:bg-amber-600',
+  declined: 'bg-rose-500 text-white hover:bg-rose-600',
+};
+// Small dot colours by status (roster).
+const STATUS_DOT_CLS: Record<ConfirmStatus, string> = {
+  confirmed: 'bg-emerald-500',
+  pending: 'bg-amber-500',
+  declined: 'bg-rose-500',
+};
+
 type Seating = Record<string, (number | null)[]>;
 
 // Table positions (% of the canvas). #1 is the centre; the rest fan out
@@ -1007,12 +1020,20 @@ function SeatingView({
           {TABLES.length} ширээ · {seatStats.totalSeats} суудал
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block w-3 h-3 rounded bg-sky-500" /> Суусан: {seatStats.seated}
+          <span className="inline-block w-3 h-3 rounded bg-emerald-500" /> Баталгаажсан
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block w-3 h-3 rounded bg-amber-500" /> Хүлээгдэж буй
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block w-3 h-3 rounded bg-rose-500" /> Татгалзсан
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block w-3 h-3 rounded border border-dashed border-slate-300" /> Хоосон
         </span>
-        <span className="text-slate-400">Суудалгүй зочид: {seatStats.unseated}</span>
+        <span className="text-slate-400">
+          Суусан: {seatStats.seated} · Суудалгүй: {seatStats.unseated}
+        </span>
         {saving && (
           <span className="inline-flex items-center gap-1 text-slate-400">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> Хадгалж байна…
@@ -1053,7 +1074,7 @@ function SeatingView({
                       }
                       className={`absolute flex items-center justify-center overflow-hidden text-[10px] font-medium transition ${
                         guest
-                          ? 'h-6 min-w-[46px] max-w-[60px] rounded-md bg-sky-500 px-1 text-white hover:bg-sky-600'
+                          ? `h-6 min-w-[46px] max-w-[60px] rounded-md px-1 ${SEAT_STATUS_CLS[guest.confirmed]}`
                           : 'h-6 w-6 rounded-md border border-dashed border-slate-300 text-slate-400 hover:border-sky-400 hover:text-sky-500'
                       }`}
                       style={{
@@ -1105,7 +1126,13 @@ function SeatingView({
                         onClick={() => onSeatClick(t.id, i)}
                         className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
                       >
-                        <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] text-slate-500">
+                        <span
+                          className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10px] ${
+                            guest
+                              ? `${STATUS_DOT_CLS[guest.confirmed]} text-white`
+                              : 'bg-slate-100 text-slate-500'
+                          }`}
+                        >
                           {i + 1}
                         </span>
                         {guest ? (
