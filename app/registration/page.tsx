@@ -1,9 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import {
   Lock,
   Search,
@@ -13,6 +19,7 @@ import {
   Loader2,
   Plus,
   Trash2,
+  Pencil,
   LogOut,
   Users,
   Phone,
@@ -37,12 +44,26 @@ interface GuestsFile {
   guests: Guest[];
 }
 
-const STORAGE_KEY = 'lhcb-reg-pass';
+type GuestDraft = Omit<Guest, 'id'>;
 
-const STATUS_META: Record<ConfirmStatus, { label: string; cls: string; icon: typeof Check }> = {
-  confirmed: { label: 'Баталгаажсан', cls: 'bg-emerald-100 text-emerald-700', icon: Check },
-  declined: { label: 'Татгалзсан', cls: 'bg-rose-100 text-rose-700', icon: X },
-  pending: { label: 'Хүлээгдэж буй', cls: 'bg-amber-100 text-amber-700', icon: Clock },
+const STORAGE_KEY = 'lhcb-reg-pass';
+const SAVE_FAIL_MSG = 'Хадгалж чадсангүй. Дахин оролдоно уу.';
+
+const EMPTY_DRAFT: GuestDraft = {
+  org: '',
+  name: '',
+  title: '',
+  invited: false,
+  confirmed: 'pending',
+  phone: '',
+  note: '',
+  responsible: '',
+};
+
+const STATUS_META: Record<ConfirmStatus, { label: string; cls: string }> = {
+  confirmed: { label: 'Баталгаажсан', cls: 'bg-emerald-100 text-emerald-700' },
+  declined: { label: 'Татгалзсан', cls: 'bg-rose-100 text-rose-700' },
+  pending: { label: 'Хүлээгдэж буй', cls: 'bg-amber-100 text-amber-700' },
 };
 
 export default function RegistrationCheckerPage() {
@@ -56,13 +77,19 @@ export default function RegistrationCheckerPage() {
   const [savingId, setSavingId] = useState<number | null>(null);
   const [error, setError] = useState('');
 
+  // Modal: 'new' to add, a Guest to edit, or null when closed.
+  const [editing, setEditing] = useState<Guest | 'new' | null>(null);
+  const [savingModal, setSavingModal] = useState(false);
+  // Inline delete confirmation (avoids window.confirm, which some webviews block).
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
   // Filters
   const [query, setQuery] = useState('');
   const [orgFilter, setOrgFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [responsibleFilter, setResponsibleFilter] = useState('');
 
-  // Restore a previously entered password (within the browser session).
   useEffect(() => {
     const saved = sessionStorage.getItem(STORAGE_KEY);
     if (saved) setPass(saved);
@@ -115,14 +142,11 @@ export default function RegistrationCheckerPage() {
     setPassInput('');
   };
 
-  const SAVE_FAIL_MSG =
-    'Хадгалж чадсангүй. Серверийн санах ой (Vercel KV) холбогдоогүй байж магадгүй.';
-
+  // Quick inline edit (phone / status / invited toggle) with optimistic update.
   const patchGuest = async (id: number, patch: Partial<Guest>) => {
     if (!pass) return;
     setSavingId(id);
     setError('');
-    // Snapshot for rollback, then apply optimistic update.
     const prevGuest = data?.guests.find((g) => g.id === id);
     setData((prev) =>
       prev
@@ -137,7 +161,6 @@ export default function RegistrationCheckerPage() {
       });
       if (!res.ok) throw new Error(String(res.status));
     } catch {
-      // Roll back the optimistic change so the UI never lies about being saved.
       if (prevGuest) {
         setData((prev) =>
           prev
@@ -151,25 +174,31 @@ export default function RegistrationCheckerPage() {
     }
   };
 
-  const addGuest = async () => {
+  // Save the Add/Edit modal (full record).
+  const saveModal = async (draft: GuestDraft) => {
     if (!pass) return;
+    setSavingModal(true);
     setError('');
     try {
+      const isNew = editing === 'new';
       const res = await fetch('/api/guests', {
-        method: 'POST',
+        method: isNew ? 'POST' : 'PUT',
         headers: { 'Content-Type': 'application/json', 'x-admin-pass': pass },
-        body: JSON.stringify({}),
+        body: JSON.stringify(isNew ? draft : { id: (editing as Guest).id, ...draft }),
       });
       if (!res.ok) throw new Error(String(res.status));
       await loadGuests(pass);
+      setEditing(null);
     } catch {
       setError(SAVE_FAIL_MSG);
+    } finally {
+      setSavingModal(false);
     }
   };
 
-  const deleteGuest = async (id: number) => {
+  const performDelete = async (id: number) => {
     if (!pass) return;
-    if (!window.confirm('Энэ зочныг устгах уу?')) return;
+    setDeleteBusy(true);
     setError('');
     try {
       const res = await fetch(`/api/guests?id=${id}`, {
@@ -180,8 +209,11 @@ export default function RegistrationCheckerPage() {
       setData((prev) =>
         prev ? { ...prev, guests: prev.guests.filter((g) => g.id !== id) } : prev
       );
+      setDeletingId(null);
     } catch {
       setError(SAVE_FAIL_MSG);
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -210,15 +242,16 @@ export default function RegistrationCheckerPage() {
     });
   }, [guests, query, orgFilter, statusFilter, responsibleFilter]);
 
-  const stats = useMemo(() => {
-    return {
+  const stats = useMemo(
+    () => ({
       total: guests.length,
       confirmed: guests.filter((g) => g.confirmed === 'confirmed').length,
       declined: guests.filter((g) => g.confirmed === 'declined').length,
       pending: guests.filter((g) => g.confirmed === 'pending').length,
       withPhone: guests.filter((g) => g.phone.trim()).length,
-    };
-  }, [guests]);
+    }),
+    [guests]
+  );
 
   // ---- Password gate ----
   if (!pass) {
@@ -324,7 +357,7 @@ export default function RegistrationCheckerPage() {
             all="Бүх хариуцагч"
             options={responsibles}
           />
-          <Button size="sm" onClick={addGuest} className="h-10">
+          <Button size="sm" onClick={() => setEditing('new')} className="h-10">
             <Plus className="h-4 w-4" />
             Зочин нэмэх
           </Button>
@@ -352,7 +385,7 @@ export default function RegistrationCheckerPage() {
                   <th className="py-3 px-3">Төлөв</th>
                   <th className="py-3 px-3">Утас</th>
                   <th className="py-3 px-3">Хариуцагч</th>
-                  <th className="py-3 px-3"></th>
+                  <th className="py-3 px-3 text-right">Үйлдэл</th>
                 </tr>
               </thead>
               <tbody>
@@ -363,7 +396,7 @@ export default function RegistrationCheckerPage() {
                       <td className="py-3 px-3 text-slate-400">{g.id}</td>
                       <td className="py-3 px-3 text-slate-600 whitespace-nowrap">{g.org || '—'}</td>
                       <td className="py-3 px-3 font-medium text-slate-900">
-                        {g.name || <span className="text-slate-300">—</span>}
+                        {g.name || <span className="text-slate-300">— нэр алга —</span>}
                         {g.note && (
                           <div className="text-xs text-slate-400 font-normal mt-0.5">{g.note}</div>
                         )}
@@ -402,6 +435,7 @@ export default function RegistrationCheckerPage() {
                       </td>
                       <td className="py-3 px-3">
                         <Input
+                          key={`${g.id}-${g.phone}`}
                           defaultValue={g.phone}
                           onBlur={(e) => {
                             if (e.target.value !== g.phone) patchGuest(g.id, { phone: e.target.value });
@@ -415,14 +449,52 @@ export default function RegistrationCheckerPage() {
                         {g.responsible || '—'}
                       </td>
                       <td className="py-3 px-3">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => deleteGuest(g.id)}
-                          title="Устгах"
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-slate-400" />
-                        </Button>
+                        {deletingId === g.id ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <span className="text-xs text-rose-600 mr-1">Устгах уу?</span>
+                            <Button
+                              variant="destructive"
+                              size="icon-sm"
+                              disabled={deleteBusy}
+                              onClick={() => performDelete(g.id)}
+                              title="Тийм, устга"
+                            >
+                              {deleteBusy ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Check className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              disabled={deleteBusy}
+                              onClick={() => setDeletingId(null)}
+                              title="Болих"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => setEditing(g)}
+                              title="Засах"
+                            >
+                              <Pencil className="h-3.5 w-3.5 text-slate-500" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              onClick={() => setDeletingId(g.id)}
+                              title="Устгах"
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-rose-400" />
+                            </Button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
@@ -443,6 +515,16 @@ export default function RegistrationCheckerPage() {
           Энэ нь түр зуурын дотоод хуудас. Өөрчлөлтүүд автоматаар хадгалагдана.
         </p>
       </div>
+
+      {editing !== null && (
+        <GuestModal
+          initial={editing === 'new' ? EMPTY_DRAFT : editing}
+          isNew={editing === 'new'}
+          saving={savingModal}
+          onCancel={() => setEditing(null)}
+          onSave={saveModal}
+        />
+      )}
     </div>
   );
 }
@@ -493,5 +575,140 @@ function FilterSelect({
         </option>
       ))}
     </select>
+  );
+}
+
+function GuestModal({
+  initial,
+  isNew,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  initial: GuestDraft;
+  isNew: boolean;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (draft: GuestDraft) => void;
+}) {
+  const [form, setForm] = useState<GuestDraft>({
+    org: initial.org,
+    name: initial.name,
+    title: initial.title,
+    invited: initial.invited,
+    confirmed: initial.confirmed,
+    phone: initial.phone,
+    note: initial.note,
+    responsible: initial.responsible,
+  });
+
+  const set = <K extends keyof GuestDraft>(key: K, value: GuestDraft[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    onSave(form);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4"
+      onClick={onCancel}
+    >
+      <form
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={submit}
+        className="w-full max-w-lg bg-white rounded-2xl border border-slate-200 shadow-xl p-6 max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="text-lg font-bold text-slate-900">
+            {isNew ? 'Шинэ зочин бүртгэх' : 'Зочны мэдээлэл засах'}
+          </h2>
+          <button type="button" onClick={onCancel} className="text-slate-400 hover:text-slate-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Зочны нэр *" className="sm:col-span-2">
+            <Input value={form.name} autoFocus onChange={(e) => set('name', e.target.value)} className="h-10" />
+          </Field>
+          <Field label="Байгууллага">
+            <Input value={form.org} onChange={(e) => set('org', e.target.value)} className="h-10" />
+          </Field>
+          <Field label="Албан тушаал">
+            <Input value={form.title} onChange={(e) => set('title', e.target.value)} className="h-10" />
+          </Field>
+          <Field label="Утас">
+            <Input
+              value={form.phone}
+              inputMode="tel"
+              onChange={(e) => set('phone', e.target.value)}
+              className="h-10"
+            />
+          </Field>
+          <Field label="Хариуцагч">
+            <Input
+              value={form.responsible}
+              onChange={(e) => set('responsible', e.target.value)}
+              className="h-10"
+            />
+          </Field>
+          <Field label="Төлөв">
+            <select
+              value={form.confirmed}
+              onChange={(e) => set('confirmed', e.target.value as ConfirmStatus)}
+              className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm text-slate-700"
+            >
+              <option value="pending">Хүлээгдэж буй</option>
+              <option value="confirmed">Баталгаажсан</option>
+              <option value="declined">Татгалзсан</option>
+            </select>
+          </Field>
+          <Field label="Урилга">
+            <label className="flex h-10 items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={form.invited}
+                onChange={(e) => set('invited', e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              Урилга өгсөн
+            </label>
+          </Field>
+          <Field label="Тайлбар" className="sm:col-span-2">
+            <Input value={form.note} onChange={(e) => set('note', e.target.value)} className="h-10" />
+          </Field>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-6">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
+            Болих
+          </Button>
+          <Button type="submit" disabled={saving || !form.name.trim()}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : isNew ? 'Бүртгэх' : 'Хадгалах'}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  className,
+  children,
+}: {
+  label: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={className}>
+      <label className="block text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1.5">
+        {label}
+      </label>
+      {children}
+    </div>
   );
 }

@@ -24,6 +24,8 @@ export interface GuestsFile {
     targetGuests: string;
   };
   guests: Guest[];
+  /** Monotonic counter so guest ids are never reused after deletion. */
+  seq?: number;
 }
 
 // Temporary admin password gate for the registration checker page.

@@ -43,6 +43,10 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'Guest not found' }, { status: 404 });
   }
 
+  if (typeof body.org === 'string') guest.org = body.org;
+  if (typeof body.name === 'string') guest.name = body.name;
+  if (typeof body.title === 'string') guest.title = body.title;
+  if (typeof body.responsible === 'string') guest.responsible = body.responsible;
   if (typeof body.phone === 'string') guest.phone = body.phone.trim();
   if (typeof body.note === 'string') guest.note = body.note;
   if (typeof body.invited === 'boolean') guest.invited = body.invited;
@@ -62,7 +66,10 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => ({}));
   const data = await readGuests();
-  const nextId = data.guests.reduce((max, g) => Math.max(max, g.id), 0) + 1;
+  // Monotonic id: never reuse an id even after deleting the highest one.
+  const maxId = data.guests.reduce((max, g) => Math.max(max, g.id), 0);
+  const nextId = Math.max(maxId, data.seq ?? 0) + 1;
+  data.seq = nextId;
 
   const guest: Guest = {
     id: nextId,
