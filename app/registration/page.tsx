@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 
 type ConfirmStatus = 'pending' | 'confirmed' | 'declined';
+type GuestCategory = 'local' | 'honored';
 
 interface Guest {
   id: number;
@@ -37,6 +38,9 @@ interface Guest {
   phone: string;
   note: string;
   responsible: string;
+  category?: GuestCategory;
+  country?: string;
+  addedBy?: string;
 }
 
 interface GuestsFile {
@@ -58,6 +62,9 @@ const EMPTY_DRAFT: GuestDraft = {
   phone: '',
   note: '',
   responsible: '',
+  category: 'local',
+  country: '',
+  addedBy: '',
 };
 
 const STATUS_META: Record<ConfirmStatus, { label: string; cls: string }> = {
@@ -85,6 +92,7 @@ export default function RegistrationCheckerPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
 
   // Filters
+  const [categoryTab, setCategoryTab] = useState<GuestCategory>('local');
   const [query, setQuery] = useState('');
   const [orgFilter, setOrgFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -218,40 +226,57 @@ export default function RegistrationCheckerPage() {
   };
 
   const guests = data?.guests ?? [];
+  const catOf = (g: Guest): GuestCategory => (g.category === 'honored' ? 'honored' : 'local');
 
-  const orgs = useMemo(
-    () => Array.from(new Set(guests.map((g) => g.org).filter(Boolean))).sort(),
+  const counts = useMemo(
+    () => ({
+      local: guests.filter((g) => catOf(g) === 'local').length,
+      honored: guests.filter((g) => catOf(g) === 'honored').length,
+    }),
     [guests]
   );
+
+  // Guests in the active tab (before search/dropdown filters).
+  const categoryGuests = useMemo(
+    () => guests.filter((g) => catOf(g) === categoryTab),
+    [guests, categoryTab]
+  );
+
+  const orgs = useMemo(
+    () => Array.from(new Set(categoryGuests.map((g) => g.org).filter(Boolean))).sort(),
+    [categoryGuests]
+  );
   const responsibles = useMemo(
-    () => Array.from(new Set(guests.map((g) => g.responsible).filter(Boolean))).sort(),
-    [guests]
+    () => Array.from(new Set(categoryGuests.map((g) => g.responsible).filter(Boolean))).sort(),
+    [categoryGuests]
   );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return guests.filter((g) => {
+    return categoryGuests.filter((g) => {
       if (orgFilter && g.org !== orgFilter) return false;
       if (statusFilter && g.confirmed !== statusFilter) return false;
       if (responsibleFilter && g.responsible !== responsibleFilter) return false;
       if (q) {
-        const hay = `${g.name} ${g.org} ${g.title} ${g.phone} ${g.note} ${g.responsible}`.toLowerCase();
+        const hay = `${g.name} ${g.org} ${g.title} ${g.phone} ${g.note} ${g.responsible} ${g.country ?? ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [guests, query, orgFilter, statusFilter, responsibleFilter]);
+  }, [categoryGuests, query, orgFilter, statusFilter, responsibleFilter]);
 
   const stats = useMemo(
     () => ({
-      total: guests.length,
-      confirmed: guests.filter((g) => g.confirmed === 'confirmed').length,
-      declined: guests.filter((g) => g.confirmed === 'declined').length,
-      pending: guests.filter((g) => g.confirmed === 'pending').length,
-      withPhone: guests.filter((g) => g.phone.trim()).length,
+      total: categoryGuests.length,
+      confirmed: categoryGuests.filter((g) => g.confirmed === 'confirmed').length,
+      declined: categoryGuests.filter((g) => g.confirmed === 'declined').length,
+      pending: categoryGuests.filter((g) => g.confirmed === 'pending').length,
+      withPhone: categoryGuests.filter((g) => g.phone.trim()).length,
     }),
-    [guests]
+    [categoryGuests]
   );
+
+  const isHonored = categoryTab === 'honored';
 
   // ---- Password gate ----
   if (!pass) {
@@ -307,6 +332,22 @@ export default function RegistrationCheckerPage() {
             <LogOut className="h-3.5 w-3.5" />
             Гарах
           </Button>
+        </div>
+
+        {/* Category tabs */}
+        <div className="flex gap-2 mb-5 border-b border-slate-200">
+          <TabButton
+            active={categoryTab === 'local'}
+            onClick={() => setCategoryTab('local')}
+            label="Зочид"
+            count={counts.local}
+          />
+          <TabButton
+            active={categoryTab === 'honored'}
+            onClick={() => setCategoryTab('honored')}
+            label="Хүндэт зочид"
+            count={counts.honored}
+          />
         </div>
 
         {/* Error banner */}
@@ -378,9 +419,10 @@ export default function RegistrationCheckerPage() {
               <thead>
                 <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-400">
                   <th className="py-3 px-3 w-10">#</th>
+                  <th className="py-3 px-3 text-center w-12">Улс</th>
                   <th className="py-3 px-3">Байгууллага</th>
                   <th className="py-3 px-3">Зочны нэр</th>
-                  <th className="py-3 px-3">Албан тушаал</th>
+                  <th className="py-3 px-3">{isHonored ? 'Чиглэл' : 'Албан тушаал'}</th>
                   <th className="py-3 px-3 text-center">Урилга</th>
                   <th className="py-3 px-3">Төлөв</th>
                   <th className="py-3 px-3">Утас</th>
@@ -389,16 +431,22 @@ export default function RegistrationCheckerPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((g) => {
+                {filtered.map((g, idx) => {
                   const meta = STATUS_META[g.confirmed];
                   return (
                     <tr key={g.id} className="border-b border-slate-100 hover:bg-slate-50/60 align-top">
-                      <td className="py-3 px-3 text-slate-400">{g.id}</td>
+                      <td className="py-3 px-3 text-slate-400">{idx + 1}</td>
+                      <td className="py-3 px-3 text-center text-lg leading-none">{g.country || ''}</td>
                       <td className="py-3 px-3 text-slate-600 whitespace-nowrap">{g.org || '—'}</td>
                       <td className="py-3 px-3 font-medium text-slate-900">
                         {g.name || <span className="text-slate-300">— нэр алга —</span>}
                         {g.note && (
                           <div className="text-xs text-slate-400 font-normal mt-0.5">{g.note}</div>
+                        )}
+                        {g.addedBy && (
+                          <div className="text-xs text-slate-400 font-normal mt-0.5">
+                            Бүртгэсэн: {g.addedBy}
+                          </div>
                         )}
                       </td>
                       <td className="py-3 px-3 text-slate-600 max-w-[260px]">{g.title || '—'}</td>
@@ -501,7 +549,7 @@ export default function RegistrationCheckerPage() {
                 })}
                 {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="py-12 text-center text-slate-400">
+                    <td colSpan={10} className="py-12 text-center text-slate-400">
                       Зочин олдсонгүй.
                     </td>
                   </tr>
@@ -518,7 +566,7 @@ export default function RegistrationCheckerPage() {
 
       {editing !== null && (
         <GuestModal
-          initial={editing === 'new' ? EMPTY_DRAFT : editing}
+          initial={editing === 'new' ? { ...EMPTY_DRAFT, category: categoryTab } : editing}
           isNew={editing === 'new'}
           saving={savingModal}
           onCancel={() => setEditing(null)}
@@ -548,6 +596,38 @@ function StatCard({
         <div className="text-xs text-slate-400 mt-1">{label}</div>
       </div>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative -mb-px px-4 py-2.5 text-sm font-semibold transition-colors ${
+        active
+          ? 'text-slate-900 border-b-2 border-slate-900'
+          : 'text-slate-400 hover:text-slate-600 border-b-2 border-transparent'
+      }`}
+    >
+      {label}
+      <span
+        className={`ml-2 rounded-full px-2 py-0.5 text-xs ${
+          active ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'
+        }`}
+      >
+        {count}
+      </span>
+    </button>
   );
 }
 
@@ -600,13 +680,20 @@ function GuestModal({
     phone: initial.phone,
     note: initial.note,
     responsible: initial.responsible,
+    category: initial.category ?? 'local',
+    country: initial.country ?? '',
+    addedBy: initial.addedBy ?? '',
   });
 
   const set = <K extends keyof GuestDraft>(key: K, value: GuestDraft[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
+  const addedByMissing = isNew && !(form.addedBy ?? '').trim();
+  const canSave = form.name.trim() && !addedByMissing;
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (!canSave) return;
     onSave(form);
   };
 
@@ -630,13 +717,31 @@ function GuestModal({
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Ангилал">
+            <select
+              value={form.category ?? 'local'}
+              onChange={(e) => set('category', e.target.value as GuestCategory)}
+              className="h-10 w-full rounded-lg border border-input bg-white px-3 text-sm text-slate-700"
+            >
+              <option value="local">Зочид</option>
+              <option value="honored">Хүндэт зочид</option>
+            </select>
+          </Field>
+          <Field label="Улс (туг)">
+            <Input
+              value={form.country ?? ''}
+              onChange={(e) => set('country', e.target.value)}
+              placeholder="🇲🇳"
+              className="h-10"
+            />
+          </Field>
           <Field label="Зочны нэр *" className="sm:col-span-2">
             <Input value={form.name} autoFocus onChange={(e) => set('name', e.target.value)} className="h-10" />
           </Field>
           <Field label="Байгууллага">
             <Input value={form.org} onChange={(e) => set('org', e.target.value)} className="h-10" />
           </Field>
-          <Field label="Албан тушаал">
+          <Field label={(form.category ?? 'local') === 'honored' ? 'Чиглэл' : 'Албан тушаал'}>
             <Input value={form.title} onChange={(e) => set('title', e.target.value)} className="h-10" />
           </Field>
           <Field label="Утас">
@@ -651,6 +756,15 @@ function GuestModal({
             <Input
               value={form.responsible}
               onChange={(e) => set('responsible', e.target.value)}
+              className="h-10"
+            />
+          </Field>
+          <Field label={`Бүртгэсэн хүн${isNew ? ' *' : ''}`}>
+            <Input
+              value={form.addedBy ?? ''}
+              onChange={(e) => set('addedBy', e.target.value)}
+              placeholder="Хэн нэмж байна?"
+              aria-invalid={addedByMissing}
               className="h-10"
             />
           </Field>
@@ -685,7 +799,7 @@ function GuestModal({
           <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
             Болих
           </Button>
-          <Button type="submit" disabled={saving || !form.name.trim()}>
+          <Button type="submit" disabled={saving || !canSave}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : isNew ? 'Бүртгэх' : 'Хадгалах'}
           </Button>
         </div>

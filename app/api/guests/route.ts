@@ -49,6 +49,9 @@ export async function PUT(request: NextRequest) {
   if (typeof body.responsible === 'string') guest.responsible = body.responsible;
   if (typeof body.phone === 'string') guest.phone = body.phone.trim();
   if (typeof body.note === 'string') guest.note = body.note;
+  if (typeof body.country === 'string') guest.country = body.country;
+  if (typeof body.addedBy === 'string') guest.addedBy = body.addedBy;
+  if (body.category === 'local' || body.category === 'honored') guest.category = body.category;
   if (typeof body.invited === 'boolean') guest.invited = body.invited;
   if (typeof body.confirmed === 'string' && VALID_STATUS.includes(body.confirmed)) {
     guest.confirmed = body.confirmed;
@@ -81,6 +84,9 @@ export async function POST(request: NextRequest) {
     phone: typeof body?.phone === 'string' ? body.phone.trim() : '',
     note: typeof body?.note === 'string' ? body.note : '',
     responsible: typeof body?.responsible === 'string' ? body.responsible : '',
+    category: body?.category === 'honored' ? 'honored' : 'local',
+    country: typeof body?.country === 'string' ? body.country : '',
+    addedBy: typeof body?.addedBy === 'string' ? body.addedBy : '',
   };
 
   data.guests.push(guest);

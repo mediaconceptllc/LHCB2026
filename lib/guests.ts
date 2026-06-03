@@ -3,6 +3,7 @@ import path from 'path';
 import seed from '@/data/guests.json';
 
 export type ConfirmStatus = 'pending' | 'confirmed' | 'declined';
+export type GuestCategory = 'local' | 'honored';
 
 export interface Guest {
   id: number;
@@ -14,6 +15,12 @@ export interface Guest {
   phone: string;
   note: string;
   responsible: string;
+  /** 'local' = Зочид, 'honored' = Хүндэт зочид (international LHCb guests). */
+  category?: GuestCategory;
+  /** Country flag/name, mainly for honored guests (Улс). */
+  country?: string;
+  /** Who registered this guest (Бүртгэсэн). Required when adding. */
+  addedBy?: string;
 }
 
 export interface GuestsFile {
@@ -54,8 +61,12 @@ export async function readGuests(): Promise<GuestsFile> {
         const data = JSON.parse(text) as GuestsFile;
         if (data && Array.isArray(data.guests)) return data;
       }
-    } catch {
-      // Blob not found yet (first run) — fall through to seed.
+    } catch (e) {
+      // Only seed when the blob genuinely doesn't exist yet. Any other error
+      // (network/transient) must NOT fall through to re-seeding, or it would
+      // wipe live data — rethrow so the request fails instead.
+      const name = (e as Error)?.name ?? '';
+      if (name !== 'BlobNotFoundError') throw e;
     }
     await writeGuests(SEED);
     return SEED;
