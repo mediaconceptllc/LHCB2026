@@ -23,6 +23,9 @@ export interface Guest {
   addedBy?: string;
 }
 
+/** Seat assignments: table id (string) -> array of guest ids (or null = empty seat). */
+export type Seating = Record<string, (number | null)[]>;
+
 export interface GuestsFile {
   event: {
     title: string;
@@ -33,6 +36,8 @@ export interface GuestsFile {
   guests: Guest[];
   /** Monotonic counter so guest ids are never reused after deletion. */
   seq?: number;
+  /** Table seating plan. */
+  seating?: Seating;
 }
 
 // Temporary admin password gate for the registration checker page.

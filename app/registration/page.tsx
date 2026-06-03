@@ -18,11 +18,13 @@ import {
   Clock,
   Loader2,
   Plus,
+  Minus,
   Trash2,
   Pencil,
   LogOut,
   Users,
   Phone,
+  LayoutGrid,
 } from 'lucide-react';
 
 type ConfirmStatus = 'pending' | 'confirmed' | 'declined';
@@ -46,6 +48,8 @@ interface Guest {
 interface GuestsFile {
   event: { title: string; subtitle: string; date: string; targetGuests: string };
   guests: Guest[];
+  seq?: number;
+  seating?: Seating;
 }
 
 type GuestDraft = Omit<Guest, 'id'>;
@@ -73,6 +77,36 @@ const STATUS_META: Record<ConfirmStatus, { label: string; cls: string }> = {
   pending: { label: 'Хүлээгдэж буй', cls: 'bg-amber-100 text-amber-700' },
 };
 
+type Seating = Record<string, (number | null)[]>;
+
+// Table positions (% of the canvas). #1 is the centre; the rest fan out
+// clockwise — i.e. numbered from the centre outward.
+const TABLES: { id: number; x: number; y: number }[] = [
+  { id: 1, x: 49, y: 31 }, // centre
+  { id: 2, x: 18, y: 17 }, // top-left
+  { id: 3, x: 80, y: 16 }, // top-right
+  { id: 4, x: 82, y: 52 }, // mid-right
+  { id: 5, x: 67, y: 83 }, // bottom-right
+  { id: 6, x: 31, y: 83 }, // bottom-left
+  { id: 7, x: 18, y: 53 }, // mid-left
+];
+const DEFAULT_SEATS = 8;
+
+function buildSeating(s?: Seating): Seating {
+  const out: Seating = {};
+  for (const t of TABLES) {
+    const arr = s?.[String(t.id)];
+    out[String(t.id)] = Array.isArray(arr) ? arr.slice() : Array(DEFAULT_SEATS).fill(null);
+  }
+  if (s) for (const k of Object.keys(s)) if (!(k in out)) out[k] = s[k].slice();
+  return out;
+}
+
+function shortName(name: string): string {
+  const n = name.trim();
+  return n.length > 9 ? n.slice(0, 8) + '…' : n;
+}
+
 export default function RegistrationCheckerPage() {
   const [pass, setPass] = useState<string | null>(null);
   const [passInput, setPassInput] = useState('');
@@ -91,8 +125,12 @@ export default function RegistrationCheckerPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
-  // Filters
-  const [categoryTab, setCategoryTab] = useState<GuestCategory>('local');
+  // Tabs / filters
+  const [tab, setTab] = useState<'local' | 'honored' | 'seating'>('local');
+  const categoryTab: GuestCategory = tab === 'honored' ? 'honored' : 'local';
+  const isSeating = tab === 'seating';
+  const [seatingSaving, setSeatingSaving] = useState(false);
+  const [picking, setPicking] = useState<{ tableId: number; seatIdx: number } | null>(null);
   const [query, setQuery] = useState('');
   const [orgFilter, setOrgFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -278,6 +316,86 @@ export default function RegistrationCheckerPage() {
 
   const isHonored = categoryTab === 'honored';
 
+  // ---- Seating ----
+  const guestsById = useMemo(() => {
+    const m = new Map<number, Guest>();
+    guests.forEach((g) => m.set(g.id, g));
+    return m;
+  }, [guests]);
+
+  const seating = useMemo(() => buildSeating(data?.seating), [data?.seating]);
+
+  const seatedIds = useMemo(() => {
+    const set = new Set<number>();
+    Object.values(seating).forEach((arr) =>
+      arr.forEach((gid) => {
+        if (gid != null) set.add(gid);
+      })
+    );
+    return set;
+  }, [seating]);
+
+  const seatStats = useMemo(() => {
+    const totalSeats = Object.values(seating).reduce((n, a) => n + a.length, 0);
+    return { totalSeats, seated: seatedIds.size, unseated: guests.length - seatedIds.size };
+  }, [seating, seatedIds, guests.length]);
+
+  const cloneSeating = (): Seating => {
+    const next: Seating = {};
+    for (const k of Object.keys(seating)) next[k] = seating[k].slice();
+    return next;
+  };
+
+  const saveSeating = async (next: Seating) => {
+    if (!pass) return;
+    const prev = data?.seating;
+    setData((d) => (d ? { ...d, seating: next } : d));
+    setSeatingSaving(true);
+    setError('');
+    try {
+      const res = await fetch('/api/seating', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'x-admin-pass': pass },
+        body: JSON.stringify({ seating: next }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      setData((d) => (d ? { ...d, seating: prev } : d));
+      setError(SAVE_FAIL_MSG);
+    } finally {
+      setSeatingSaving(false);
+    }
+  };
+
+  const assignSeat = (tableId: number, seatIdx: number, guestId: number | null) => {
+    const next = cloneSeating();
+    // A guest can only sit in one seat — remove them from any other seat first.
+    if (guestId != null) {
+      for (const k of Object.keys(next)) next[k] = next[k].map((g) => (g === guestId ? null : g));
+    }
+    const key = String(tableId);
+    if (!next[key]) next[key] = Array(DEFAULT_SEATS).fill(null);
+    next[key][seatIdx] = guestId;
+    saveSeating(next);
+  };
+
+  const addSeat = (tableId: number) => {
+    const next = cloneSeating();
+    const key = String(tableId);
+    next[key] = [...(next[key] ?? []), null];
+    saveSeating(next);
+  };
+
+  const removeSeat = (tableId: number) => {
+    const next = cloneSeating();
+    const key = String(tableId);
+    const arr = next[key] ?? [];
+    if (arr.length <= 1) return;
+    arr.pop(); // drop the last seat (frees its occupant if any)
+    next[key] = arr;
+    saveSeating(next);
+  };
+
   // ---- Password gate ----
   if (!pass) {
     return (
@@ -334,19 +452,20 @@ export default function RegistrationCheckerPage() {
           </Button>
         </div>
 
-        {/* Category tabs */}
-        <div className="flex gap-2 mb-5 border-b border-slate-200">
+        {/* Tabs */}
+        <div className="flex gap-2 mb-5 border-b border-slate-200 overflow-x-auto">
+          <TabButton active={tab === 'local'} onClick={() => setTab('local')} label="Зочид" count={counts.local} />
           <TabButton
-            active={categoryTab === 'local'}
-            onClick={() => setCategoryTab('local')}
-            label="Зочид"
-            count={counts.local}
-          />
-          <TabButton
-            active={categoryTab === 'honored'}
-            onClick={() => setCategoryTab('honored')}
+            active={tab === 'honored'}
+            onClick={() => setTab('honored')}
             label="Хүндэт зочид"
             count={counts.honored}
+          />
+          <TabButton
+            active={tab === 'seating'}
+            onClick={() => setTab('seating')}
+            label="Ширээний хуваарь"
+            count={seatStats.seated}
           />
         </div>
 
@@ -361,6 +480,8 @@ export default function RegistrationCheckerPage() {
           </div>
         )}
 
+        {!isSeating && (
+        <>
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
           <StatCard icon={Users} label="Нийт" value={stats.total} cls="text-slate-900" />
@@ -558,6 +679,20 @@ export default function RegistrationCheckerPage() {
             </table>
           )}
         </div>
+        </>
+        )}
+
+        {isSeating && (
+          <SeatingView
+            seating={seating}
+            guestsById={guestsById}
+            seatStats={seatStats}
+            saving={seatingSaving}
+            onSeatClick={(tableId, seatIdx) => setPicking({ tableId, seatIdx })}
+            onAddSeat={addSeat}
+            onRemoveSeat={removeSeat}
+          />
+        )}
 
         <p className="text-xs text-slate-300 mt-4">
           Энэ нь түр зуурын дотоод хуудас. Өөрчлөлтүүд автоматаар хадгалагдана.
@@ -571,6 +706,22 @@ export default function RegistrationCheckerPage() {
           saving={savingModal}
           onCancel={() => setEditing(null)}
           onSave={saveModal}
+        />
+      )}
+
+      {picking && (
+        <SeatPicker
+          tableId={picking.tableId}
+          seatIdx={picking.seatIdx}
+          current={seating[String(picking.tableId)]?.[picking.seatIdx] ?? null}
+          guests={guests}
+          guestsById={guestsById}
+          seatedIds={seatedIds}
+          onClose={() => setPicking(null)}
+          onAssign={(gid) => {
+            assignSeat(picking.tableId, picking.seatIdx, gid);
+            setPicking(null);
+          }}
         />
       )}
     </div>
@@ -823,6 +974,260 @@ function Field({
         {label}
       </label>
       {children}
+    </div>
+  );
+}
+
+function SeatingView({
+  seating,
+  guestsById,
+  seatStats,
+  saving,
+  onSeatClick,
+  onAddSeat,
+  onRemoveSeat,
+}: {
+  seating: Seating;
+  guestsById: Map<number, Guest>;
+  seatStats: { totalSeats: number; seated: number; unseated: number };
+  saving: boolean;
+  onSeatClick: (tableId: number, seatIdx: number) => void;
+  onAddSeat: (tableId: number) => void;
+  onRemoveSeat: (tableId: number) => void;
+}) {
+  const R = 78; // seat ring radius (px)
+
+  return (
+    <div>
+      {/* Legend / summary */}
+      <div className="flex flex-wrap items-center gap-4 mb-4 text-sm text-slate-500">
+        <span className="inline-flex items-center gap-2">
+          <LayoutGrid className="h-4 w-4 text-slate-400" />
+          {TABLES.length} ширээ · {seatStats.totalSeats} суудал
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block w-3 h-3 rounded bg-sky-500" /> Суусан: {seatStats.seated}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block w-3 h-3 rounded border border-dashed border-slate-300" /> Хоосон
+        </span>
+        <span className="text-slate-400">Суудалгүй зочид: {seatStats.unseated}</span>
+        {saving && (
+          <span className="inline-flex items-center gap-1 text-slate-400">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Хадгалж байна…
+          </span>
+        )}
+      </div>
+
+      {/* Visual plan */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
+        <div className="relative mx-auto h-[640px] min-w-[720px] max-w-[920px]">
+          {TABLES.map((t) => {
+            const seats = seating[String(t.id)] ?? [];
+            const n = Math.max(seats.length, 1);
+            return (
+              <div
+                key={t.id}
+                className="absolute"
+                style={{ left: `${t.x}%`, top: `${t.y}%`, transform: 'translate(-50%, -50%)' }}
+              >
+                {/* Table */}
+                <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-sky-300 text-base font-bold text-slate-800 shadow">
+                  {t.id}
+                </div>
+                {/* Seats */}
+                {seats.map((gid, i) => {
+                  const ang = -Math.PI / 2 + (i * 2 * Math.PI) / n;
+                  const sx = Math.cos(ang) * R;
+                  const sy = Math.sin(ang) * R;
+                  const guest = gid != null ? guestsById.get(gid) : undefined;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => onSeatClick(t.id, i)}
+                      title={
+                        guest
+                          ? `${guest.name}${guest.org ? ' — ' + guest.org : ''}`
+                          : `Суудал ${i + 1} (хоосон)`
+                      }
+                      className={`absolute flex items-center justify-center overflow-hidden text-[10px] font-medium transition ${
+                        guest
+                          ? 'h-6 min-w-[46px] max-w-[60px] rounded-md bg-sky-500 px-1 text-white hover:bg-sky-600'
+                          : 'h-6 w-6 rounded-md border border-dashed border-slate-300 text-slate-400 hover:border-sky-400 hover:text-sky-500'
+                      }`}
+                      style={{
+                        left: '50%',
+                        top: '50%',
+                        transform: `translate(-50%, -50%) translate(${sx}px, ${sy}px)`,
+                      }}
+                    >
+                      {guest ? shortName(guest.name) : i + 1}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Roster + seat controls */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mt-6">
+        {TABLES.map((t) => {
+          const seats = seating[String(t.id)] ?? [];
+          const occupied = seats.filter((g) => g != null && guestsById.has(g)).length;
+          return (
+            <div key={t.id} className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-slate-900">
+                  Ширээ {t.id}{' '}
+                  <span className="text-xs font-normal text-slate-400">
+                    ({occupied}/{seats.length})
+                  </span>
+                </h3>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="icon-sm" onClick={() => onRemoveSeat(t.id)} title="Суудал хасах">
+                    <Minus className="h-3.5 w-3.5" />
+                  </Button>
+                  <span className="text-xs text-slate-400 w-4 text-center">{seats.length}</span>
+                  <Button variant="ghost" size="icon-sm" onClick={() => onAddSeat(t.id)} title="Суудал нэмэх">
+                    <Plus className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+              <ol className="space-y-1">
+                {seats.map((gid, i) => {
+                  const guest = gid != null ? guestsById.get(gid) : undefined;
+                  return (
+                    <li key={i}>
+                      <button
+                        onClick={() => onSeatClick(t.id, i)}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-slate-50"
+                      >
+                        <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] text-slate-500">
+                          {i + 1}
+                        </span>
+                        {guest ? (
+                          <span className="flex-1 truncate text-slate-800">
+                            {guest.country ? guest.country + ' ' : ''}
+                            {guest.name}
+                            {guest.org ? <span className="text-slate-400"> · {guest.org}</span> : ''}
+                          </span>
+                        ) : (
+                          <span className="flex-1 text-slate-300">— хоосон —</span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SeatPicker({
+  tableId,
+  seatIdx,
+  current,
+  guests,
+  guestsById,
+  seatedIds,
+  onClose,
+  onAssign,
+}: {
+  tableId: number;
+  seatIdx: number;
+  current: number | null;
+  guests: Guest[];
+  guestsById: Map<number, Guest>;
+  seatedIds: Set<number>;
+  onClose: () => void;
+  onAssign: (guestId: number | null) => void;
+}) {
+  const [q, setQ] = useState('');
+  const currentGuest = current != null ? guestsById.get(current) : undefined;
+
+  const candidates = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    return guests
+      .filter((g) => !seatedIds.has(g.id) || g.id === current)
+      .filter((g) => {
+        if (!query) return true;
+        return `${g.name} ${g.org} ${g.title} ${g.country ?? ''}`.toLowerCase().includes(query);
+      });
+  }, [guests, seatedIds, current, q]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-xl p-5 max-h-[85vh] flex flex-col"
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-bold text-slate-900">
+            Ширээ {tableId} · Суудал {seatIdx + 1}
+          </h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {currentGuest && (
+          <div className="mb-3 flex items-center justify-between rounded-lg bg-sky-50 px-3 py-2 text-sm">
+            <span className="text-slate-700">
+              Одоо: <b>{currentGuest.name}</b>
+            </span>
+            <Button variant="destructive" size="sm" onClick={() => onAssign(null)}>
+              Хоослох
+            </Button>
+          </div>
+        )}
+
+        <div className="relative mb-3">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input
+            value={q}
+            autoFocus
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Зочин хайх…"
+            className="h-10 pl-9"
+          />
+        </div>
+
+        <div className="flex-1 overflow-y-auto -mx-1 px-1">
+          {candidates.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-400">Сул зочин алга.</p>
+          ) : (
+            <ul className="space-y-1">
+              {candidates.map((g) => (
+                <li key={g.id}>
+                  <button
+                    onClick={() => onAssign(g.id)}
+                    className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 ${
+                      g.id === current ? 'bg-sky-50' : ''
+                    }`}
+                  >
+                    <span className="flex-1 truncate text-slate-800">
+                      {g.country ? g.country + ' ' : ''}
+                      {g.name}
+                      {g.org ? <span className="text-slate-400"> · {g.org}</span> : ''}
+                    </span>
+                    {g.category === 'honored' && (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] text-amber-700">
+                        Хүндэт
+                      </span>
+                    )}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
