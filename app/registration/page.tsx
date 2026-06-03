@@ -54,6 +54,7 @@ export default function RegistrationCheckerPage() {
   const [data, setData] = useState<GuestsFile | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingId, setSavingId] = useState<number | null>(null);
+  const [error, setError] = useState('');
 
   // Filters
   const [query, setQuery] = useState('');
@@ -114,21 +115,37 @@ export default function RegistrationCheckerPage() {
     setPassInput('');
   };
 
+  const SAVE_FAIL_MSG =
+    'Хадгалж чадсангүй. Серверийн санах ой (Vercel KV) холбогдоогүй байж магадгүй.';
+
   const patchGuest = async (id: number, patch: Partial<Guest>) => {
     if (!pass) return;
     setSavingId(id);
-    // Optimistic update
+    setError('');
+    // Snapshot for rollback, then apply optimistic update.
+    const prevGuest = data?.guests.find((g) => g.id === id);
     setData((prev) =>
       prev
         ? { ...prev, guests: prev.guests.map((g) => (g.id === id ? { ...g, ...patch } : g)) }
         : prev
     );
     try {
-      await fetch('/api/guests', {
+      const res = await fetch('/api/guests', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'x-admin-pass': pass },
         body: JSON.stringify({ id, ...patch }),
       });
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      // Roll back the optimistic change so the UI never lies about being saved.
+      if (prevGuest) {
+        setData((prev) =>
+          prev
+            ? { ...prev, guests: prev.guests.map((g) => (g.id === id ? prevGuest : g)) }
+            : prev
+        );
+      }
+      setError(SAVE_FAIL_MSG);
     } finally {
       setSavingId(null);
     }
@@ -136,25 +153,35 @@ export default function RegistrationCheckerPage() {
 
   const addGuest = async () => {
     if (!pass) return;
-    const res = await fetch('/api/guests', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-admin-pass': pass },
-      body: JSON.stringify({}),
-    });
-    if (res.ok) loadGuests(pass);
+    setError('');
+    try {
+      const res = await fetch('/api/guests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-pass': pass },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      await loadGuests(pass);
+    } catch {
+      setError(SAVE_FAIL_MSG);
+    }
   };
 
   const deleteGuest = async (id: number) => {
     if (!pass) return;
     if (!window.confirm('Энэ зочныг устгах уу?')) return;
-    const res = await fetch(`/api/guests?id=${id}`, {
-      method: 'DELETE',
-      headers: { 'x-admin-pass': pass },
-    });
-    if (res.ok) {
+    setError('');
+    try {
+      const res = await fetch(`/api/guests?id=${id}`, {
+        method: 'DELETE',
+        headers: { 'x-admin-pass': pass },
+      });
+      if (!res.ok) throw new Error(String(res.status));
       setData((prev) =>
         prev ? { ...prev, guests: prev.guests.filter((g) => g.id !== id) } : prev
       );
+    } catch {
+      setError(SAVE_FAIL_MSG);
     }
   };
 
@@ -248,6 +275,17 @@ export default function RegistrationCheckerPage() {
             Гарах
           </Button>
         </div>
+
+        {/* Error banner */}
+        {error && (
+          <div className="mb-4 flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <X className="h-4 w-4 mt-0.5 flex-shrink-0" />
+            <div className="flex-1">{error}</div>
+            <button onClick={() => setError('')} className="text-rose-400 hover:text-rose-600">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
