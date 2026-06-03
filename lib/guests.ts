@@ -32,34 +32,30 @@ export const ADMIN_PASSWORD = '98115512';
 const SEED = seed as GuestsFile;
 
 // --- Storage backend selection -------------------------------------------
-// On Vercel the filesystem is read-only, so we persist to a Redis (Vercel KV /
-// Upstash) store when its env vars are present. Locally we fall back to the
-// JSON file on disk, so `next dev` keeps working with zero setup.
-const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-const useRedis = Boolean(KV_URL && KV_TOKEN);
-const REDIS_KEY = 'lhcb2026:guests';
+// On Vercel the filesystem is read-only, so we persist to a private Vercel Blob
+// store when its token is present. Locally we fall back to the JSON file on
+// disk, so `next dev` keeps working with zero setup.
+const BLOB_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
+const useBlob = Boolean(BLOB_TOKEN);
+const BLOB_PATH = 'guests.json';
 
 const DATA_PATH = path.join(process.cwd(), 'data', 'guests.json');
 
-type RedisClient = import('@upstash/redis').Redis;
-let redisClient: RedisClient | null = null;
-
-async function getRedis(): Promise<RedisClient> {
-  if (!redisClient) {
-    const { Redis } = await import('@upstash/redis');
-    redisClient = new Redis({ url: KV_URL!, token: KV_TOKEN! });
-  }
-  return redisClient;
-}
-
 export async function readGuests(): Promise<GuestsFile> {
-  if (useRedis) {
-    const redis = await getRedis();
-    const data = await redis.get<GuestsFile>(REDIS_KEY);
-    if (data && Array.isArray(data.guests)) return data;
-    // First run on a fresh store: seed it from the bundled list.
-    await redis.set(REDIS_KEY, SEED);
+  if (useBlob) {
+    const { get } = await import('@vercel/blob');
+    try {
+      // useCache:false → always read the latest write (strong read-after-write).
+      const result = await get(BLOB_PATH, { access: 'private', useCache: false });
+      if (result?.stream) {
+        const text = await new Response(result.stream).text();
+        const data = JSON.parse(text) as GuestsFile;
+        if (data && Array.isArray(data.guests)) return data;
+      }
+    } catch {
+      // Blob not found yet (first run) — fall through to seed.
+    }
+    await writeGuests(SEED);
     return SEED;
   }
   const raw = await fs.readFile(DATA_PATH, 'utf-8');
@@ -67,9 +63,15 @@ export async function readGuests(): Promise<GuestsFile> {
 }
 
 export async function writeGuests(data: GuestsFile): Promise<void> {
-  if (useRedis) {
-    const redis = await getRedis();
-    await redis.set(REDIS_KEY, data);
+  if (useBlob) {
+    const { put } = await import('@vercel/blob');
+    await put(BLOB_PATH, JSON.stringify(data, null, 2), {
+      access: 'private',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      cacheControlMaxAge: 0,
+    });
     return;
   }
   await fs.writeFile(DATA_PATH, JSON.stringify(data, null, 2) + '\n', 'utf-8');
