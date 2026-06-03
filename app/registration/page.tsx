@@ -82,13 +82,14 @@ type Seating = Record<string, (number | null)[]>;
 // Table positions (% of the canvas). #1 is the centre; the rest fan out
 // clockwise — i.e. numbered from the centre outward.
 const TABLES: { id: number; x: number; y: number }[] = [
-  { id: 1, x: 49, y: 31 }, // centre
-  { id: 2, x: 18, y: 17 }, // top-left
-  { id: 3, x: 80, y: 16 }, // top-right
-  { id: 4, x: 82, y: 52 }, // mid-right
-  { id: 5, x: 67, y: 83 }, // bottom-right
-  { id: 6, x: 31, y: 83 }, // bottom-left
-  { id: 7, x: 18, y: 53 }, // mid-left
+  { id: 1, x: 49, y: 27 }, // centre-top
+  { id: 2, x: 18, y: 15 }, // top-left
+  { id: 3, x: 80, y: 14 }, // top-right
+  { id: 4, x: 82, y: 47 }, // mid-right
+  { id: 5, x: 67, y: 86 }, // bottom-right
+  { id: 6, x: 31, y: 86 }, // bottom-left
+  { id: 7, x: 18, y: 47 }, // mid-left
+  { id: 8, x: 49, y: 60 }, // centre
 ];
 const DEFAULT_SEATS = 8;
 
@@ -1021,7 +1022,7 @@ function SeatingView({
 
       {/* Visual plan */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-x-auto">
-        <div className="relative mx-auto h-[640px] min-w-[720px] max-w-[920px]">
+        <div className="relative mx-auto h-[720px] min-w-[720px] max-w-[920px]">
           {TABLES.map((t) => {
             const seats = seating[String(t.id)] ?? [];
             const n = Math.max(seats.length, 1);
